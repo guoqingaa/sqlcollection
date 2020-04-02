@@ -13,6 +13,15 @@ object FMain: TFMain
   OldCreateOrder = False
   PixelsPerInch = 96
   TextHeight = 13
+  object btn1: TButton
+    Left = 256
+    Top = 56
+    Width = 75
+    Height = 25
+    Caption = 'btn1'
+    TabOrder = 0
+    OnClick = btn1Click
+  end
   object SQLCollection1: TSQLCollection
     Items = <
       item
@@ -44,6 +53,11 @@ object FMain: TFMain
           end
           item
             Name = 'SQL0'
+          end
+          item
+            Name = 'SQL6'
+            SQL.Strings = (
+              'SELECT NOW()')
           end>
       end
       item
@@ -63,6 +77,14 @@ object FMain: TFMain
       end
       item
         Name = 'Category0'
+        SQLItems = <>
+      end
+      item
+        Name = 'Category6'
+        SQLItems = <>
+      end
+      item
+        Name = 'Category7'
         SQLItems = <>
       end>
     Left = 240

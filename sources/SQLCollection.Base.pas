@@ -51,6 +51,8 @@ type
     function BinarySearch(const AItem: string; out AIndex: Integer;
       const AComparer: IComparer<TCollectionItem> = nil): Boolean; overload;
 
+    function Contains(const AItemName: string; AComparer: IComparer<TCollectionItem> = nil): Boolean;
+
     property CollectionItems: TList<TCollectionItem> read GetCollectionItems;
   end;
 
@@ -98,6 +100,13 @@ begin
   Result := GetCollectionItems.BinarySearch(AItem, AIndex, LComparer);
 end;
 
+function TSortableCollection.Contains(const AItemName: string; AComparer: IComparer<TCollectionItem>): Boolean;
+var
+  LIndex: Integer;
+begin
+  Result := BinarySearch(AItemName, LIndex, AComparer);
+end;
+
 constructor TSortableCollection.Create(AOwner: TPersistent; ItemClass: TCollectionItemClass);
 begin
   inherited Create(AOwner, ItemClass);
@@ -133,7 +142,7 @@ begin
         LField := LObjType.GetField('FItems');
         if Assigned(LField) then
         begin
-          FCollectionItems := LField.GetValue(Self).AsType<TList<TCollectionItem>>;
+          FCollectionItems := TList<TCollectionItem>(LField.GetValue(Self).AsObject);
           Break;
         end;
       end;

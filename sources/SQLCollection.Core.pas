@@ -90,19 +90,24 @@ type
 
   TSQLItem = class(TCollectionItem)
   private
+    FSQLHash: string;
     FName: string;
     FSQL: TStrings;
+    FLastModifiedDate: TDateTime;
     procedure SetSQL(const Value: TStrings);
     function GetCategory: string;
+    procedure OnSQLChanged(Sender: TObject);
   protected
     function GetDisplayName: string; override;
   public
     constructor Create(Collection: TCollection); override;
     destructor Destroy; override;
+    procedure AfterConstruction; override;
   published
     property Category: string read GetCategory;
     property Name: string read FName write FName;
     property SQL: TStrings read FSQL write SetSQL;
+    property LastModifiedDate: TDateTime read FLastModifiedDate;
   end;
 
   ESQLCollectionException = class(Exception);
@@ -110,6 +115,9 @@ type
 procedure Register;
 
 implementation
+
+uses
+  System.Hash;
 
 procedure Register;
 begin
@@ -167,6 +175,9 @@ end;
 
 function TSQLCategories.Add(const ASQLCategoryName: string): TSQLCategory;
 begin
+  if Self.Contains(ASQLCategoryName) then
+    raise ESQLCollectionException.CreateFmt('There is already an category with the name %s', [ASQLCategoryName]);
+
   Result := TSQLCategory.Create(Self);
   Result.Name := ASQLCategoryName;
   Self.Sort;
@@ -219,6 +230,10 @@ end;
 
 function TSQLItems.Add(const ASQLItemName: string): TSQLItem;
 begin
+  if Self.Contains(ASQLItemName) then
+    raise ESQLCollectionException.CreateFmt('There is already an item with the name %s in the %s category',
+      [ASQLItemName, (Self.Owner as TSQLCategory).Name]);
+
   Result := TSQLItem.Create(Self);
   Result.Name := ASQLItemName;
   Self.Sort;
@@ -242,10 +257,18 @@ end;
 
 { TSQLItem }
 
+procedure TSQLItem.AfterConstruction;
+begin
+  inherited;
+  FLastModifiedDate := Now;
+end;
+
 constructor TSQLItem.Create(Collection: TCollection);
 begin
   inherited Create(Collection);
   FSQL := TStringList.Create;
+
+  TStringList(FSQL).OnChange := OnSQLChanged;
 end;
 
 destructor TSQLItem.Destroy;
@@ -265,6 +288,18 @@ begin
 
   if Result.IsEmpty then
     Result := inherited GetDisplayName;
+end;
+
+procedure TSQLItem.OnSQLChanged(Sender: TObject);
+var
+  LSQLHash: string;
+begin
+  LSQLHash := THashMD5.GetHashString(FSQL.Text);
+  if not FSQLHash.Equals(LSQLHash) then
+  begin
+    FLastModifiedDate := Now;
+    FSQLHash := LSQLHash;
+  end;
 end;
 
 procedure TSQLItem.SetSQL(const Value: TStrings);
