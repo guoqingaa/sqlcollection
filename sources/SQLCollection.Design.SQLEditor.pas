@@ -55,18 +55,10 @@ uses
   SynEditSearch,
   SynEdit,
   Vcl.ComCtrls,
-  SQLCollection.Core;
+  SQLCollection.Core,
+  System.Generics.Collections;
 
 type
-  TSQLItemInfo = class
-  public
-    FModified: Boolean;
-    FSQL: TStrings;
-    FSQLItem: TSQLItem;
-    constructor Create;
-    destructor Destroy; override;
-  end;
-
   TSQLEditor = class(TDesignWindow)
     SynEditSearch1: TSynEditSearch;
     dlgReplace: TReplaceDialog;
@@ -77,7 +69,6 @@ type
     imglstCompletion: TImageList;
     pmEditor: TPopupMenu;
     mniSave: TMenuItem;
-    mniSaveAll: TMenuItem;
     mniN2: TMenuItem;
     mniCut: TMenuItem;
     mniCopy: TMenuItem;
@@ -94,7 +85,6 @@ type
     mniReplace: TMenuItem;
     actlst1: TActionList;
     actSave: TAction;
-    actSaveAll: TAction;
     actOpenQuery: TAction;
     actExecQuery: TAction;
     actCopyToNavicat: TAction;
@@ -123,7 +113,6 @@ type
     pnInfo1: TPanel;
     pnInfo2: TPanel;
     pnHeader: TPanel;
-    tbcSQLItems: TTabControl;
     edtSQLEdit: TSynEdit;
     procedure actMacroPlayExecute(Sender: TObject);
     procedure actMacroPlayAllExecute(Sender: TObject);
@@ -137,12 +126,8 @@ type
     procedure SynMacroRecorderStateChange(Sender: TObject);
     procedure SynCompletionProposalExecute(Kind: SynCompletionType; Sender: TObject; var CurrentInput: string; var x,
       y: Integer; var CanExecute: Boolean);
-    procedure tbcSQLItemsChange(Sender: TObject);
-    procedure tbcSQLItemsChanging(Sender: TObject; var AllowChange: Boolean);
-    procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure actSaveExecute(Sender: TObject);
-    procedure actSaveAllExecute(Sender: TObject);
     procedure actSelectAllExecute(Sender: TObject);
     procedure actUndoExecute(Sender: TObject);
     procedure actRedoExecute(Sender: TObject);
@@ -153,20 +138,20 @@ type
     procedure actReplaceExecute(Sender: TObject);
     procedure actCopyToNavicatExecute(Sender: TObject);
     procedure actPasteFromNavicatExecute(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure FormCreate(Sender: TObject);
   private
-    FTimerAutoClose: TTimer;
-    FOpeningClosing: Boolean;
+    FSQLItem: TSQLItem;
     function GetMacroRecording: Boolean;
     procedure AddSynCompletionReserverdWords;
     procedure AddSynCompletionFunctions;
     procedure AddSynCompletionDataTypes;
-    procedure tmrAutoCloseTimer(Sender: TObject);
-    function ContainsSQLItemInEditor(ASQLItem: TSQLItem; var ATabIndex: Integer): Boolean;
     procedure DeleteSelection;
     function ParseSQLParamsToNavicatParams(ASQL: string): string;
   public
     { Public declarations }
-    procedure OpenSQLEditor(ASQLItem: TSQLItem);
+    property SQLItem: TSQLItem read FSQLItem write FSQLItem;
   end;
 
   /// <summary>
@@ -175,7 +160,7 @@ type
   THackSynEdit = class(TCustomSynEdit);
 
 var
-  SQLEditor: TSQLEditor;
+  GSQLEditorList: TList<TSQLEditor>;
 
 implementation
 
@@ -186,7 +171,8 @@ uses
   SynEditMiscProcs,
   SynUnicode,
   Vcl.Clipbrd,
-  System.RegularExpressions;
+  System.RegularExpressions,
+  SQLCollection.Design.Utils;
 
 {$R *.dfm}
 
@@ -355,58 +341,12 @@ begin
   dlgReplace.Execute;
 end;
 
-procedure TSQLEditor.actSaveAllExecute(Sender: TObject);
-var
-  I: Integer;
-  LSQLItemInfo: TSQLItemInfo;
-  LDesigner: IDesigner;
-begin
-
-  if tbcSQLItems.Tabs.Count <= 0 then
-    Exit;
-
-  tbcSQLItems.Tabs.BeginUpdate;
-  try
-    for I := 0 to Pred(tbcSQLItems.Tabs.Count) do
-    begin
-      LSQLItemInfo := tbcSQLItems.Tabs.Objects[I] as TSQLItemInfo;
-
-      if not Assigned(LSQLItemInfo) then
-        Continue;
-
-      LSQLItemInfo.FSQLItem.SQL.Assign(LSQLItemInfo.FSQL);
-      LSQLItemInfo.FModified := False;
-    end;
-  finally
-    tbcSQLItems.Tabs.EndUpdate;
-  end;
-
-  LDesigner := (Owner as TSQLCollectionEditor).Designer;
-  if LDesigner <> nil then
-    LDesigner.Modified;
-end;
-
 procedure TSQLEditor.actSaveExecute(Sender: TObject);
-var
-  LSQLItemInfo: TSQLItemInfo;
-  LDesigner: IDesigner;
 begin
-  if tbcSQLItems.TabIndex < 0 then
-    Exit;
+  FSQLItem.SQL.Assign(edtSQLEdit.Lines);
 
-  LSQLItemInfo := tbcSQLItems.Tabs.Objects[tbcSQLItems.TabIndex] as TSQLItemInfo;
-  if not Assigned(LSQLItemInfo) then
-    Exit;
-
-  LSQLItemInfo.FSQLItem.SQL.Assign(edtSQLEdit.Lines);
-  LSQLItemInfo.FSQL.Assign(edtSQLEdit.Lines);
-  LSQLItemInfo.FModified := False;
-
-  edtSQLEdit.Modified := False;
-
-  LDesigner := (Owner as TSQLCollectionEditor).Designer;
-  if LDesigner <> nil then
-    LDesigner.Modified;
+  if Designer <> nil then
+    Designer.Modified;
 end;
 
 procedure TSQLEditor.actSelectAllExecute(Sender: TObject);
@@ -464,31 +404,6 @@ begin
     SynCompletionProposal.InsertList.Add(LKey);
     SynCompletionProposal.ItemList.Add(
       Format('\color{clNavy} \column{}\color{clBlue}\style{+B}%s\style{-B}', [LKey]));
-  end;
-end;
-
-function TSQLEditor.ContainsSQLItemInEditor(ASQLItem: TSQLItem; var ATabIndex: Integer): Boolean;
-var
-  I: Integer;
-  APair: TSQLItemInfo;
-begin
-  Result := False;
-  ATabIndex := - 1;
-
-  tbcSQLItems.Tabs.BeginUpdate;
-  try
-    for I := 0 to Pred(tbcSQLItems.Tabs.Count) do
-    begin
-      APair := tbcSQLItems.Tabs.Objects[I] as TSQLItemInfo;
-      if APair.FSQLItem = ASQLItem then
-      begin
-        ATabIndex := I;
-        Result := True;
-        Break;
-      end;
-    end;
-  finally
-    tbcSQLItems.Tabs.EndUpdate;
   end;
 end;
 
@@ -813,46 +728,35 @@ begin
   end;
 end;
 
+procedure TSQLEditor.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+  FSQLItem.SQL.Assign(edtSQLEdit.Lines);
+end;
+
 procedure TSQLEditor.FormCreate(Sender: TObject);
 begin
-  FTimerAutoClose := TTimer.Create(Self);
-  FTimerAutoClose.Enabled := False;
-  FtimerAutoClose.Interval := 500;
-  FTimerAutoClose.OnTimer := tmrAutoCloseTimer;
-
-  FOpeningClosing := True;
-  tbcSQLItems.Tabs.Clear;
-
+  TSQLCollectionDesignUtils.FixComponentsGlyphs(Self);
+  if Assigned(GSQLEditorList) then
+    GSQLEditorList.Add(Self);
 end;
 
 procedure TSQLEditor.FormDestroy(Sender: TObject);
 begin
-  FreeAndNil(FTimerAutoClose);
+  if Assigned(GSQLEditorList) then
+    GSQLEditorList.Remove(Self);
+end;
+
+procedure TSQLEditor.FormShow(Sender: TObject);
+begin
+  if edtSQLEdit.CanFocus then
+    edtSQLEdit.SetFocus;
+
+  SynMacroRecorderStateChange(SynMacroRecorder);
 end;
 
 function TSQLEditor.GetMacroRecording: Boolean;
 begin
   Result := (SynMacroRecorder.State = msRecording);
-end;
-
-procedure TSQLEditor.OpenSQLEditor(ASQLItem: TSQLItem);
-var
-  LTabIndex: Integer;
-  LSQLItemInfo: TSQLItemInfo;
-begin
-  if ContainsSQLItemInEditor(ASQLItem, LTabIndex) then
-  begin
-    tbcSQLItems.TabIndex := LTabIndex;
-    Exit;
-  end;
-
-  LSQLItemInfo := TSQLItemInfo.Create;
-  LSQLItemInfo.FSQL.Assign(ASQLItem.SQL);
-  LSQLItemInfo.FSQLItem := ASQLItem;
-
-  LTabIndex := tbcSQLItems.Tabs.AddObject(Format('%s - %s', [ASQLItem.Name, ASQLItem.Category]), LSQLItemInfo);
-  tbcSQLItems.TabIndex := LTabIndex;
-  tbcSQLItemsChange(tbcSQLItems);
 end;
 
 function TSQLEditor.ParseSQLParamsToNavicatParams(ASQL: string): string;
@@ -975,66 +879,14 @@ begin
   actMacroStop.Enabled := GetMacroRecording;
 end;
 
-procedure TSQLEditor.tbcSQLItemsChange(Sender: TObject);
-var
-  LPair: TSQLItemInfo;
-begin
-  try
-    if (tbcSQLItems.TabIndex < 0) or (tbcSQLItems.Tabs.Count <= 0) then
-      Exit;
+initialization
 
-    LPair := tbcSQLItems.Tabs.Objects[tbcSQLItems.TabIndex] as TSQLItemInfo;
-    if Assigned(LPair) then
-    begin
-      edtSQLEdit.Lines.Assign(LPair.FSQL);
-      edtSQLEdit.Modified := LPair.FModified;
-    end;
-  except
-  end;
-end;
+GSQLEditorList := TList<TSQLEditor>.Create;
 
-procedure TSQLEditor.tbcSQLItemsChanging(Sender: TObject; var AllowChange: Boolean);
-var
-  LSQLItemInfo: TSQLItemInfo;
-begin
-  try
-    if (tbcSQLItems.TabIndex < 0) or (tbcSQLItems.Tabs.Count <= 0) then
-      Exit;
+finalization
 
-    LSQLItemInfo := tbcSQLItems.Tabs.Objects[tbcSQLItems.TabIndex] as TSQLItemInfo;
-    if Assigned(LSQLItemInfo) then
-    begin
-      LSQLItemInfo.FSQL.Assign(edtSQLEdit.Lines);
-      LSQLItemInfo.FModified := edtSQLEdit.Modified;
-      edtSQLEdit.Lines.Clear;
-    end;
-  except
-  end;
-end;
+if Assigned(GSQLEditorList) then
+  FreeAndNIl(GSQLEditorList);
 
-procedure TSQLEditor.tmrAutoCloseTimer(Sender: TObject);
-begin
-  if (not FOpeningClosing) and (tbcSQLItems.Tabs.Count <= 0) then
-  begin
-    TTimer(Sender).Enabled := False;
-    Close;
-  end;
-end;
-
-{ TSQLItemInfo }
-
-constructor TSQLItemInfo.Create;
-begin
-  inherited Create;
-  FModified := False;
-  FSQL := TStringList.Create;
-  FSQLItem := nil;
-end;
-
-destructor TSQLItemInfo.Destroy;
-begin
-  FreeAndNil(FSQL);
-  inherited Destroy;
-end;
 
 end.

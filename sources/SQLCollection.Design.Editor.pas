@@ -50,7 +50,10 @@ uses
   Vcl.ActnList,
   Vcl.Buttons,
   SQLCollection.Design.SQLEditor,
-  Vcl.Menus;
+  Vcl.Menus,
+  SQLCollection.Design.JsonDataObjects,
+  System.ImageList,
+  Vcl.ImgList;
 
 type
   TSQLCollectionEditor = class(TDesignWindow)
@@ -62,10 +65,10 @@ type
     cbxSearch: TComboBox;
     lbSearch: TLabel;
     btnSearch: TSpeedButton;
-    actAddCategory: TAction;
-    actRemoveCategory: TAction;
-    actAddSQLItem: TAction;
-    actRemoveSQLItem: TAction;
+    actSQLCategoryAdd: TAction;
+    actSQLCategoryRemove: TAction;
+    actSQLItemAdd: TAction;
+    actSQLItemRemove: TAction;
     actSearchItems: TAction;
     pnItems: TPanel;
     splCatItems: TSplitter;
@@ -77,6 +80,38 @@ type
     btnCloseSearchResults: TSpeedButton;
     pmSQLItems: TPopupMenu;
     mniAddSQLItem: TMenuItem;
+    pmSQLCategories: TPopupMenu;
+    actSQLItemCopyStructure: TAction;
+    actSQLItemCopyLink: TAction;
+    actSQLItemPaste: TAction;
+    actSQLItemCut: TAction;
+    actSQLItemSelectAll: TAction;
+    actSQLItemRename: TAction;
+    actSQLItemChangeCategory: TAction;
+    mniSQLItemRemove: TMenuItem;
+    mniSQLItemCopyLink: TMenuItem;
+    mniSQLItemCopyStructure: TMenuItem;
+    mniSQLItemPaste: TMenuItem;
+    mniSQLItemCut: TMenuItem;
+    mniSQLItemSelectAll: TMenuItem;
+    mniSQLItemRename: TMenuItem;
+    mniN1: TMenuItem;
+    mniN2: TMenuItem;
+    mniSQLItemChangeCategory: TMenuItem;
+    mniN3: TMenuItem;
+    mniAddCategory: TMenuItem;
+    mniRemoveCategory: TMenuItem;
+    actSQLItemEdit: TAction;
+    mniSQLItemEdit: TMenuItem;
+    mniN4: TMenuItem;
+    btnSQLCategoryAdd: TToolButton;
+    btnSQLCategoryRemove: TToolButton;
+    btn3: TToolButton;
+    btnSQLItemAdd: TToolButton;
+    btnSQLCategoryRemove1: TToolButton;
+    imglst1: TImageList;
+    btn1: TToolButton;
+    btnSQLItemEdit: TToolButton;
     procedure lstCategoriesClick(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
@@ -85,15 +120,30 @@ type
     procedure lstItemsDblClick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormCreate(Sender: TObject);
-    procedure actAddCategoryExecute(Sender: TObject);
-    procedure actAddSQLItemExecute(Sender: TObject);
+    procedure actSQLCategoryAddExecute(Sender: TObject);
+    procedure actSQLItemAddExecute(Sender: TObject);
     procedure lstCategoriesDragDrop(Sender, Source: TObject; X, Y: Integer);
     procedure lstCategoriesDragOver(Sender, Source: TObject; X, Y: Integer; State: TDragState; var Accept: Boolean);
+    procedure actSQLCategoryRemoveExecute(Sender: TObject);
+    procedure actSQLItemRemoveExecute(Sender: TObject);
+    procedure actSQLItemRenameExecute(Sender: TObject);
+    procedure actSQLItemChangeCategoryExecute(Sender: TObject);
+    procedure actSQLItemSelectAllExecute(Sender: TObject);
+    procedure actSQLItemCopyLinkExecute(Sender: TObject);
+    procedure actSQLItemCopyStructureExecute(Sender: TObject);
+    procedure actSQLItemCutExecute(Sender: TObject);
+    procedure actSQLItemPasteExecute(Sender: TObject);
+    procedure actSQLItemEditExecute(Sender: TObject);
+    procedure cbxSearchKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure cbxSearchEnter(Sender: TObject);
+    procedure cbxSearchExit(Sender: TObject);
+    procedure pmSQLItemsPopup(Sender: TObject);
   private
     FSQLCollection: TSQLCollection;
-    FSQLEditor: TSQLEditor;
     function GetConfigFileName: string;
     procedure FillCategories;
+    procedure SQLItemRemove;
+    procedure SQLItemsToJsonArray(const ASQLItems: TList<TSQLItem>; AJsonArray: TJDOJsonArray);
   public
     procedure SelectItem(const ASQLItem: TSQLItem; const AFocusCtrl: Boolean = True);
     procedure DesignerClosed(const ADesigner: IDesigner; AGoingDormant: Boolean); override;
@@ -110,13 +160,14 @@ implementation
 uses
   System.Win.Registry,
   System.IOUtils,
-  System.RegularExpressions;
+  System.RegularExpressions,
+  Vcl.Clipbrd;
 
 {$R *.dfm}
 
 { TSQLCollectionEditor }
 
-procedure TSQLCollectionEditor.actAddCategoryExecute(Sender: TObject);
+procedure TSQLCollectionEditor.actSQLCategoryAddExecute(Sender: TObject);
 var
   LCategory: string;
 begin
@@ -125,16 +176,18 @@ begin
 
   FSQLCollection.Items.Add(LCategory);
   FillCategories;
+  if Assigned(Designer) then
+    Designer.Modified;
 
   lstCategories.ItemIndex := lstCategories.Items.IndexOf(LCategory);
   if lstCategories.ItemIndex >= 0 then
   begin
-    lstCategories.Selected[lstCategories.ItemIndex] := True;;
+    lstCategories.Selected[lstCategories.ItemIndex] := True;
     lstCategoriesClick(lstCategories);
   end;
 end;
 
-procedure TSQLCollectionEditor.actAddSQLItemExecute(Sender: TObject);
+procedure TSQLCollectionEditor.actSQLItemAddExecute(Sender: TObject);
 var
   LSQLCategory: TSQLCategory;
   I: Integer;
@@ -164,19 +217,290 @@ begin
   begin
     LSQLCategory.SQLItems.Add(LStr);
     FillCategories;
+    if Assigned(Designer) then
+      Designer.Modified;
+
   end
   else
     ShowMessage('An SQLItem with this name already exists.');
+end;
+
+procedure TSQLCollectionEditor.actSQLItemChangeCategoryExecute(Sender: TObject);
+var
+  LSQLItem: TSQLItem;
+  LName: string;
+  LSQLCategory: TSQLCategory;
+  I: Integer;
+begin
+  if lstItems.ItemIndex < 0 then
+    Exit;
+
+  if not InputQuery('Change Category', 'Enter new category: ', LName) then
+    Exit;
+
+  LSQLCategory := FSQLCollection.Items[LName];
+  if not Assigned(LSQLCategory) then
+    FSQLCollection.Items.Add(LName);
+
+  LSQLItem := nil;
+  for I := Pred(lstItems.Count) to 0 do
+  begin
+    if lstItems.Selected[I] then
+    begin
+      LSQLItem := lstItems.Items.Objects[I] as TSQLItem;
+      LSQLItem.Collection := LSQLCategory.SQLItems;
+    end;
+  end;
+
+  FillCategories;
+
+  if Assigned(LSQLItem) then
+    try
+      lstCategories.ItemIndex := lstCategories.Items.IndexOfObject(LSQLCategory);
+      lstCategories.Selected[lstCategories.ItemIndex] := True;
+      lstCategoriesClick(lstCategories);
+      lstItems.ItemIndex := lstItems.Items.IndexOfObject(LSQLItem);
+      lstItems.Selected[lstItems.ItemIndex] := True;
+    except
+    end;
+
+  if Assigned(Designer) then
+    Designer.Modified;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemCopyLinkExecute(Sender: TObject);
+var
+  LSQLItem: TSQLItem;
+begin
+  if lstItems.ItemIndex < 0 then
+    Exit;
+
+  LSQLItem := lstItems.Items.Objects[lstItems.ItemIndex] as TSQLItem;
+
+  Clipboard.Open;
+  try
+    Clipboard.AsText := Format('%s.%s.FindSQL(''%s'', ''%s'');',
+      [FSQLCollection.Owner.Name, FSQLCollection.Name, LSQLItem.Name, LSQLItem.Category]);
+  finally
+    Clipboard.Close;
+  end;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemCopyStructureExecute(Sender: TObject);
+var
+  I: Integer;
+  LSQLItem: TSQLItem;
+  LSQLItemList: TList<TSQLItem>;
+  LJsonArray: TJDOJsonArray;
+begin
+  LSQLItemList := TList<TSQLItem>.Create;
+  try
+    for I := 0 to Pred(lstItems.Count) do
+      if lstItems.Selected[I] then
+      begin
+        LSQLItem := lstItems.Items.Objects[I] as TSQLItem;
+        LSQLItemList.Add(LSQLItem);
+      end;
+    LJsonArray := TJDOJsonArray.Create;
+    try
+      SQLItemsToJsonArray(LSQLItemList, LJsonArray);
+
+      Clipboard.Open;
+      try
+        Clipboard.AsText := LJsonArray.ToJSON(False);
+      finally
+        Clipboard.Close;
+      end;
+    finally
+      FreeAndNil(LJsonArray);
+    end;
+  finally
+    FreeAndNil(LSQLItemList);
+  end;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemCutExecute(Sender: TObject);
+begin
+  actSQLItemCopyStructure.Execute;
+  SQLItemRemove;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemEditExecute(Sender: TObject);
+var
+  LSQLEditor: TSQLEditor;
+  LSQLItem: TSQLItem;
+begin
+  if lstItems.ItemIndex < 0 then
+    Exit;
+
+  LSQLItem := lstItems.Items.Objects[lstItems.ItemIndex] as TSQLItem;
+
+  { SQLCollection.Design.SQLEditor }
+  for LSQLEditor in GSQLEditorList do
+  begin
+    if LSQLEditor.SQLItem = LSQLItem then
+    begin
+      LSQLEditor.Show;
+      if LSQLEditor.WindowState <> wsNormal then
+        LSQLEditor.WindowState := wsNormal;
+      LSQLEditor.SetFocus;
+      Exit;
+    end;
+  end;
+
+  LSQLEditor := TSQLEditor.Create(Self);
+  try
+    LSQLEditor.SQLItem := LSQLItem;
+    LSQLEditor.Designer := Self.Designer;
+    LSQLEditor.Caption := Format('%s - %s', [LSQLItem.Name, LSQLItem.Category]);
+    LSQLEditor.edtSQLEdit.Lines.Assign(LSQLItem.SQL);
+
+    LSQLEditor.Show;
+  except
+    if Assigned(LSQLEditor) then
+      LSQLEditor.Release;
+  end;
+
+end;
+
+procedure TSQLCollectionEditor.actSQLItemPasteExecute(Sender: TObject);
+var
+  LClipBoardStr: string;
+  LJsonArray: TJDOJsonArray;
+  I: Integer;
+  LJsonObject: TJDOJsonObject;
+  LSQLItem: TSQLItem;
+  LSQLCategory: TSQLCategory;
+begin
+
+  Clipboard.Open;
+  try
+    LClipBoardStr := Clipboard.AsText;
+  finally
+    Clipboard.Close;
+  end;
+
+  if Trim(LClipBoardStr) = '' then
+    Exit;
+
+  LSQLItem := nil;
+  LSQLCategory := nil;
+
+  LJsonArray := TJDOJsonArray.Create;
+  try
+    LJsonArray.FromJSON(LClipBoardStr);
+    for I := 0 to Pred(LJsonArray.Count) do
+    begin
+      LJsonObject := LJsonArray.O[I];
+      LSQLItem := FSQLCollection.FindSQLItem(LJsonObject.S['SQLItemName'], LJsonObject.S['SQLCategoryName']);
+      if Assigned(LSQLItem) then
+      begin
+        LSQLItem.SQL.Text := LJsonObject.S['SQL'];
+      end
+      else
+      begin
+        LSQLCategory := FSQLCollection.Items[LJsonObject.S['SQLCategoryName']];
+        if not Assigned(LSQLCategory) then
+          LSQLCategory := FSQLCollection.Items.Add(LJsonObject.S['SQLCategoryName']);
+
+        LSQLItem := LSQLCategory.SQLItems.Add(LJsonObject.S['SQLItemName']);
+        LSQLItem.SQL.Text := LJsonObject.S['SQL'];
+      end;
+    end;
+
+    FillCategories;
+
+    if Assigned(LSQLCategory) and Assigned(LSQLItem) then
+    begin
+      lstCategories.ItemIndex := lstCategories.Items.IndexOfObject(LSQLCategory);
+      lstCategories.Selected[lstCategories.ItemIndex] := True;
+      lstCategoriesClick(lstCategories);
+      lstItems.ItemIndex := lstItems.Items.IndexOfObject(LSQLItem);
+      lstItems.Selected[lstItems.ItemIndex] := True;
+    end;
+
+    if Assigned(Designer) then
+      Designer.Modified;
+
+  finally
+    FreeAndNil(LJsonArray);
+  end;
+end;
+
+procedure TSQLCollectionEditor.actSQLCategoryRemoveExecute(Sender: TObject);
+var
+  LSQLCategory: TSQLCategory;
+begin
+  if lstCategories.ItemIndex < 0 then
+    Exit;
+
+  LSQLCategory := lstCategories.Items.Objects[lstCategories.ItemIndex] as TSQLCategory;
+
+  if MessageDlg('Do you really want to delete this category?', mtConfirmation, [mbYes, mbNo], 0, mbYes) <> mrYes then
+    Exit;
+
+  FreeAndNil(LSQLCategory);
+  FillCategories;
+  if Assigned(Designer) then
+    Designer.Modified;
+
+end;
+
+procedure TSQLCollectionEditor.actSQLItemRemoveExecute(Sender: TObject);
+begin
+  if lstItems.ItemIndex < 0 then
+    Exit;
+
+  if MessageDlg('Do you really want to delete this SQLItem?', mtConfirmation, [mbYes, mbNo], 0, mbYes) <> mrYes then
+    Exit;
+
+  SQLItemRemove;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemRenameExecute(Sender: TObject);
+var
+  LSQLItem: TSQLItem;
+  LName: string;
+begin
+  if lstItems.ItemIndex < 0 then
+    Exit;
+
+  LSQLItem := lstItems.Items.Objects[lstItems.ItemIndex] as TSQLItem;
+
+  if not InputQuery('Rename SQLItem', 'Enter new name: ', LName) then
+    Exit;
+
+  if SameText(LName, LSQLItem.Name) then
+    Exit;
+
+  if Assigned((LSQLItem.Collection as TSQLItems)[LName]) then
+  begin
+    MessageDlg(Format('SQLItem %s already exists', [LName]), mtInformation, [mbOK], 0);
+    Exit;
+  end;
+
+  LSQLItem.Name := LName;
+  FillCategories;
+  if Assigned(Designer) then
+    Designer.Modified;
+end;
+
+procedure TSQLCollectionEditor.actSQLItemSelectAllExecute(Sender: TObject);
+begin
+  lstItems.SelectAll;
 end;
 
 procedure TSQLCollectionEditor.actSearchItemsExecute(Sender: TObject);
 var
   LSearchText: string;
   I: Integer;
+  J: Integer;
   LMatches: TMatchCollection;
   LSQLItemName: string;
   LSQLCategoryName: string;
   LSQLItem: TSQLItem;
+  LSQLCategory: TSQLCategory;
+  LNodeCategory: TTreeNode;
 begin
   if cbxSearch.Text = '' then
     Exit;
@@ -192,8 +516,8 @@ begin
   LMatches := TRegex.Matches(LSearchText, #39'([^'#39']*)'#39);
   if LMatches.Count = 2 then
   begin
-    LSQLItemName := LMatches[0].Groups[0].Value;
-    LSQLCategoryName := LMatches[1].Groups[0].Value;
+    LSQLItemName := LMatches[0].Groups[0].Value.DeQuotedString('''');
+    LSQLCategoryName := LMatches[1].Groups[0].Value.DeQuotedString('''');
 
     LSQLItem := FSQLCollection.FindSQLItem(LSQLItemName, LSQLCategoryName);
 
@@ -206,11 +530,77 @@ begin
       Exit;
     end;
   end;
+
+  LSearchText := LSearchText.ToLower;
+
+  tvItems.Items.Clear;
+  tvItems.Items.BeginUpdate;
+  try
+    for I := 0 to Pred(FSQLCollection.Items.Count) do
+    begin
+      LNodeCategory := nil;
+      LSQLCategory := FSQLCollection.Items.SQLCategory[I];
+      for J := 0 to Pred(LSQLCategory.SQLItems.Count) do
+      begin
+        LSQLItem := LSQLCategory.SQLItems.SQLItem[J];
+        if LSQLItem.Category.ToLower.Contains(LSearchText) or
+          LSQLItem.Name.ToLower.Contains(LSearchText) or
+          LSQLItem.SQL.Text.ToLower.Contains(LSearchText) then
+        begin
+          if not Assigned(LNodeCategory) then
+          begin
+            LNodeCategory := tvItems.Items.AddChildObject(nil, LSQLItem.Category, LSQLCategory);
+            LNodeCategory.Expanded := True;
+          end;
+
+          tvItems.Items.AddChildObject(LNodeCategory, LSQLItem.Name, LSQLItem).Expanded := True;
+        end;
+      end;
+    end;
+  finally
+    if tvItems.Items.Count > 0 then
+    begin
+      tvItems.Selected := tvItems.Items[0];
+      tvItems.Items.EndUpdate;
+      pnFooter.Height := 180;
+    end
+    else
+    begin
+      MessageDlg('No items found!', mtInformation, [mbOk], 0);
+    end;
+  end;
 end;
 
 procedure TSQLCollectionEditor.btnCloseSearchResultsClick(Sender: TObject);
 begin
   pnFooter.Height := 1;
+end;
+
+procedure TSQLCollectionEditor.cbxSearchEnter(Sender: TObject);
+begin
+  actSQLItemAdd.Enabled := False;
+  actSQLItemRemove.Enabled := False;
+  actSQLItemCopyLink.Enabled := False;
+  actSQLItemPaste.Enabled := False;
+  actSQLItemEdit.Enabled := False;
+end;
+
+procedure TSQLCollectionEditor.cbxSearchExit(Sender: TObject);
+begin
+  actSQLItemAdd.Enabled := True;
+  actSQLItemRemove.Enabled := True;
+  actSQLItemCopyLink.Enabled := True;
+  actSQLItemPaste.Enabled := True;
+  actSQLItemEdit.Enabled := True;
+end;
+
+procedure TSQLCollectionEditor.cbxSearchKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if Key = 13 then
+  begin
+    actSearchItems.Execute;
+    Key := 0;
+  end;
 end;
 
 procedure TSQLCollectionEditor.DesignerClosed(const ADesigner: IDesigner; AGoingDormant: Boolean);
@@ -278,6 +668,8 @@ procedure TSQLCollectionEditor.FormCreate(Sender: TObject);
 begin
   if Assigned(GSQLCollectionEditorList) then
     GSQLCollectionEditorList.Add(Self);
+
+  pnFooter.Height := 1;
 end;
 
 procedure TSQLCollectionEditor.FormDestroy(Sender: TObject);
@@ -381,7 +773,6 @@ begin
 
   LSQLCategory := lstCategories.Items.Objects[LIndex] as TSQLCategory;
 
-
   for I := 0 to lstItems.Items.Count - 1 do
   begin
     if lstItems.Selected[I] then
@@ -410,24 +801,14 @@ begin
 end;
 
 procedure TSQLCollectionEditor.lstItemsDblClick(Sender: TObject);
-var
-  I: Integer;
 begin
-  if lstItems.ItemIndex = - 1 then
-    Exit;
+  actSQLItemEdit.Execute;
+end;
 
-  { SQLCollection.Design.SQLEditor }
-  if not Assigned(FSQLEditor) then
-    FSQLEditor := TSQLEditor.Create(Self);
-
-  for I := 0 to Pred(lstItems.Items.Count) do
-    if lstItems.Selected[I] then
-      FSQLEditor.OpenSQLEditor(TSQLItem(lstItems.Items.Objects[I]));
-
-  if FSQLEditor.WindowState <> wsNormal then
-    FSQLEditor.WindowState := wsNormal;
-
-  FSQLEditor.Show;
+procedure TSQLCollectionEditor.pmSQLItemsPopup(Sender: TObject);
+begin
+  if lstItems.CanFocus then
+    lstItems.SetFocus;
 end;
 
 procedure TSQLCollectionEditor.SelectItem(const ASQLItem: TSQLItem; const AFocusCtrl: Boolean);
@@ -447,6 +828,52 @@ begin
 
   if AFocusCtrl then
     lstItems.SetFocus;
+end;
+
+procedure TSQLCollectionEditor.SQLItemRemove;
+var
+  LSQLItem: TSQLItem;
+  I: Integer;
+  LHasItemDeleted: Boolean;
+begin
+  LHasItemDeleted := False;
+  for I := Pred(lstItems.Items.Count) downto 0 do
+    if lstItems.Selected[I] then
+    begin
+      LSQLItem := TSQLItem(lstItems.Items.Objects[I]);
+      lstItems.Items.Objects[I] := nil;
+      FreeAndNil(LSQLItem);
+      lstItems.Items.Delete(I);
+      LHasItemDeleted := True;
+    end;
+
+  if (lstItems.Items.Count > 0) then
+    LSQLItem := TSQLItem(lstItems.Items.Objects[Pred(lstItems.Items.Count)]);
+
+  if LHasItemDeleted then
+  begin
+    if (lstItems.Items.Count > 0) then
+      LSQLItem := TSQLItem(lstItems.Items.Objects[Pred(lstItems.Items.Count)]);
+
+    FillCategories;
+    if Assigned(Designer) then
+      Designer.Modified;
+  end;
+
+end;
+
+procedure TSQLCollectionEditor.SQLItemsToJsonArray(const ASQLItems: TList<TSQLItem>; AJsonArray: TJDOJsonArray);
+var
+  LSQLItem: TSQLItem;
+  LJsonObject: TJDOJsonObject;
+begin
+  for LSQLItem in ASQLItems do
+  begin
+    LJsonObject := AJsonArray.AddObject;
+    LJsonObject.S['SQLCategoryName'] := LSQLItem.Category;
+    LJsonObject.S['SQLItemName'] := LSQLItem.Name;
+    LJsonObject.S['SQL'] := LSQLItem.SQL.Text;
+  end;
 end;
 
 initialization
